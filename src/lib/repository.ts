@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { AgencyCredentialRecord, AssetRecord, ContributorAddress, ContributorPayment, ContributorProfile, ContributorTax, FtpProtocol, MediaType, PlatformKey, ReleaseStatus, StorageBackend, SubmissionRecord, UserRecord } from './domain';
-import { ensureDatabase, getPg, getSqlite, usingPostgres } from './db';
+import type { AgencyCredentialRecord, AssetRecord, ContributorAddress, ContributorPayment, ContributorProfile, ContributorTax, FtpProtocol, JobRecord, JobStatus, MediaType, PlatformKey, ReleaseStatus, StorageBackend, SubmissionRecord, UserRecord } from './domain';
+import { ensureDatabase, getPg, getSqlite, usingFirestore, usingPostgres } from './db';
+import * as fsRepo from './repository-firestore';
 import { nowIso } from './utils';
 
 type AssetInsert = Omit<AssetRecord, 'id' | 'createdAt' | 'updatedAt'>;
@@ -85,6 +86,7 @@ function stripPassword(user: UserWithPassword | null): UserRecord | null {
 }
 
 export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserRecord | null> {
+  if (usingFirestore()) return fsRepo.getUserByFirebaseUid(firebaseUid);
   await ensureDatabase();
   if (usingPostgres()) {
     const sql = getPg();
@@ -96,6 +98,7 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserRec
 }
 
 export async function createUserFromFirebase(input: { uid: string; email: string; name: string }): Promise<UserRecord> {
+  if (usingFirestore()) return fsRepo.createUserFromFirebase(input);
   await ensureDatabase();
   const id = randomUUID();
   const now = nowIso();
@@ -118,6 +121,7 @@ export async function createUserFromFirebase(input: { uid: string; email: string
 }
 
 export async function createAsset(input: AssetInsert): Promise<AssetRecord> {
+  if (usingFirestore()) return fsRepo.createAsset(input);
   await ensureDatabase();
   const id = randomUUID();
   const now = nowIso();
@@ -173,6 +177,7 @@ export async function updateAssetMetadata(
   assetId: string,
   metadata: { title: string; description: string; keywords: string[] },
 ): Promise<AssetRecord | null> {
+  if (usingFirestore()) return fsRepo.updateAssetMetadata(userId, assetId, metadata);
   await ensureDatabase();
   const now = nowIso();
   const keywordsJson = JSON.stringify(metadata.keywords);
@@ -205,6 +210,7 @@ export async function updateAssetMetadata(
 }
 
 export async function listAssetsForUser(userId: string) {
+  if (usingFirestore()) return fsRepo.listAssetsForUser(userId);
   await ensureDatabase();
   let assetRows: Record<string, unknown>[] = [];
   let submissionRows: Record<string, unknown>[] = [];
@@ -234,6 +240,7 @@ export async function listAssetsForUser(userId: string) {
 }
 
 export async function getAssetByIdForUser(userId: string, assetId: string) {
+  if (usingFirestore()) return fsRepo.getAssetByIdForUser(userId, assetId);
   await ensureDatabase();
   if (usingPostgres()) {
     const sql = getPg();
@@ -245,6 +252,7 @@ export async function getAssetByIdForUser(userId: string, assetId: string) {
 }
 
 export async function createSubmission(input: SubmissionInsert) {
+  if (usingFirestore()) return fsRepo.createSubmission(input);
   await ensureDatabase();
   const id = randomUUID();
   const now = nowIso();
@@ -295,6 +303,7 @@ type AgencyCredentialInsert = {
 };
 
 export async function upsertAgencyCredential(input: AgencyCredentialInsert): Promise<AgencyCredentialRecord> {
+  if (usingFirestore()) return fsRepo.upsertAgencyCredential(input);
   await ensureDatabase();
   const id = randomUUID();
   const now = nowIso();
@@ -335,6 +344,7 @@ export async function upsertAgencyCredential(input: AgencyCredentialInsert): Pro
 }
 
 export async function getAgencyCredential(userId: string, platform: PlatformKey): Promise<AgencyCredentialRecord | null> {
+  if (usingFirestore()) return fsRepo.getAgencyCredential(userId, platform);
   await ensureDatabase();
   if (usingPostgres()) {
     const sql = getPg();
@@ -347,6 +357,7 @@ export async function getAgencyCredential(userId: string, platform: PlatformKey)
 
 // Never returns the (encrypted) password — decryption happens only in the upload worker via getAgencyCredential.
 export async function listAgencyCredentials(userId: string): Promise<Omit<AgencyCredentialRecord, 'encryptedPassword'>[]> {
+  if (usingFirestore()) return fsRepo.listAgencyCredentials(userId);
   await ensureDatabase();
   let rows: Record<string, unknown>[] = [];
   if (usingPostgres()) {
@@ -397,6 +408,7 @@ type ContributorProfileInsert = {
 };
 
 export async function getContributorProfile(userId: string): Promise<ContributorProfile | null> {
+  if (usingFirestore()) return fsRepo.getContributorProfile(userId);
   await ensureDatabase();
   if (usingPostgres()) {
     const sql = getPg();
@@ -408,6 +420,7 @@ export async function getContributorProfile(userId: string): Promise<Contributor
 }
 
 export async function upsertContributorProfile(input: ContributorProfileInsert): Promise<ContributorProfile> {
+  if (usingFirestore()) return fsRepo.upsertContributorProfile(input);
   await ensureDatabase();
   const id = randomUUID();
   const now = nowIso();
@@ -454,7 +467,190 @@ export async function upsertContributorProfile(input: ContributorProfileInsert):
   return (await getContributorProfile(input.userId))!;
 }
 
+function mapJobRow(row: Record<string, unknown>): JobRecord {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    assetId: row.asset_id == null ? null : String(row.asset_id),
+    type: String(row.type),
+    status: String(row.status) as JobStatus,
+    attempts: Number(row.attempts),
+    maxAttempts: Number(row.max_attempts),
+    payload: parseJsonColumn<Record<string, unknown>>(row.payload_json, {}),
+    result: parseJsonColumn<Record<string, unknown> | null>(row.result_json, null),
+    error: row.error == null ? null : String(row.error),
+    runAfter: String(row.run_after),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+export async function enqueueJob(input: {
+  userId: string;
+  assetId?: string | null;
+  type: string;
+  payload: Record<string, unknown>;
+}): Promise<JobRecord> {
+  if (usingFirestore()) return fsRepo.enqueueJob(input);
+  await ensureDatabase();
+  const id = randomUUID();
+  const now = nowIso();
+  const assetId = input.assetId ?? null;
+  const payloadJson = JSON.stringify(input.payload);
+
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`
+      INSERT INTO jobs (id, user_id, asset_id, type, status, attempts, max_attempts, payload_json, run_after, created_at, updated_at)
+      VALUES (${id}, ${input.userId}, ${assetId}, ${input.type}, 'pending', 0, 3, ${payloadJson}::jsonb, ${now}, ${now}, ${now})
+      RETURNING *
+    `;
+    return mapJobRow(rows[0]);
+  }
+
+  getSqlite()
+    .prepare(
+      `INSERT INTO jobs (id, user_id, asset_id, type, status, attempts, max_attempts, payload_json, run_after, created_at, updated_at)
+       VALUES (@id, @user_id, @asset_id, @type, 'pending', 0, 3, @payload_json, @run_after, @created_at, @updated_at)`,
+    )
+    .run({ id, user_id: input.userId, asset_id: assetId, type: input.type, payload_json: payloadJson, run_after: now, created_at: now, updated_at: now });
+  return (await getJobById(id))!;
+}
+
+async function getJobById(jobId: string): Promise<JobRecord | null> {
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`SELECT * FROM jobs WHERE id = ${jobId} LIMIT 1`;
+    return rows[0] ? mapJobRow(rows[0]) : null;
+  }
+  const row = getSqlite().prepare('SELECT * FROM jobs WHERE id = ? LIMIT 1').get(jobId) as Record<string, unknown> | undefined;
+  return row ? mapJobRow(row) : null;
+}
+
+// Atomically claim the oldest ready pending job and flip it to 'processing'.
+export async function claimNextReadyJob(): Promise<JobRecord | null> {
+  if (usingFirestore()) return fsRepo.claimNextReadyJob();
+  await ensureDatabase();
+  const now = nowIso();
+
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`
+      UPDATE jobs SET status = 'processing', updated_at = ${now}
+      WHERE id = (
+        SELECT id FROM jobs
+        WHERE status = 'pending' AND run_after <= ${now}::timestamptz
+        ORDER BY created_at
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `;
+    return rows[0] ? mapJobRow(rows[0]) : null;
+  }
+
+  // better-sqlite3 is synchronous and single-threaded; a transaction makes the
+  // SELECT-then-UPDATE atomic against concurrent claims within the process.
+  const db = getSqlite();
+  const claim = db.transaction((claimedAt: string): Record<string, unknown> | undefined => {
+    const row = db
+      .prepare("SELECT * FROM jobs WHERE status = 'pending' AND run_after <= ? ORDER BY created_at LIMIT 1")
+      .get(claimedAt) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    db.prepare("UPDATE jobs SET status = 'processing', updated_at = ? WHERE id = ?").run(claimedAt, String(row.id));
+    return { ...row, status: 'processing', updated_at: claimedAt };
+  });
+  const claimed = claim(now);
+  return claimed ? mapJobRow(claimed) : null;
+}
+
+export async function markJobSucceeded(id: string, result: Record<string, unknown>): Promise<void> {
+  if (usingFirestore()) return fsRepo.markJobSucceeded(id, result);
+  await ensureDatabase();
+  const now = nowIso();
+  const resultJson = JSON.stringify(result);
+
+  if (usingPostgres()) {
+    const sql = getPg();
+    await sql`UPDATE jobs SET status = 'succeeded', result_json = ${resultJson}::jsonb, updated_at = ${now} WHERE id = ${id}`;
+    return;
+  }
+  getSqlite().prepare("UPDATE jobs SET status = 'succeeded', result_json = ?, updated_at = ? WHERE id = ?").run(resultJson, now, id);
+}
+
+// Increment attempts; requeue (pending, delayed by backoffMs) while retries remain, else mark failed.
+export async function markJobFailed(id: string, errorMessage: string, backoffMs: number): Promise<void> {
+  if (usingFirestore()) return fsRepo.markJobFailed(id, errorMessage, backoffMs);
+  await ensureDatabase();
+  const now = nowIso();
+  const job = await getJobById(id);
+  if (!job) return;
+
+  const attempts = job.attempts + 1;
+  const willRetry = attempts < job.maxAttempts;
+  const status: JobStatus = willRetry ? 'pending' : 'failed';
+  const runAfter = willRetry ? new Date(Date.now() + backoffMs).toISOString() : job.runAfter;
+
+  if (usingPostgres()) {
+    const sql = getPg();
+    await sql`
+      UPDATE jobs SET status = ${status}, attempts = ${attempts}, error = ${errorMessage}, run_after = ${runAfter}::timestamptz, updated_at = ${now}
+      WHERE id = ${id}
+    `;
+    return;
+  }
+  getSqlite()
+    .prepare('UPDATE jobs SET status = ?, attempts = ?, error = ?, run_after = ?, updated_at = ? WHERE id = ?')
+    .run(status, attempts, errorMessage, runAfter, now, id);
+}
+
+export async function listJobsForUser(userId: string): Promise<JobRecord[]> {
+  if (usingFirestore()) return fsRepo.listJobsForUser(userId);
+  await ensureDatabase();
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`SELECT * FROM jobs WHERE user_id = ${userId} ORDER BY created_at DESC`;
+    return rows.map(mapJobRow);
+  }
+  const rows = getSqlite().prepare('SELECT * FROM jobs WHERE user_id = ? ORDER BY created_at DESC').all(userId) as Record<string, unknown>[];
+  return rows.map(mapJobRow);
+}
+
+export async function getJobForUser(userId: string, jobId: string): Promise<JobRecord | null> {
+  if (usingFirestore()) return fsRepo.getJobForUser(userId, jobId);
+  await ensureDatabase();
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`SELECT * FROM jobs WHERE id = ${jobId} AND user_id = ${userId} LIMIT 1`;
+    return rows[0] ? mapJobRow(rows[0]) : null;
+  }
+  const row = getSqlite().prepare('SELECT * FROM jobs WHERE id = ? AND user_id = ? LIMIT 1').get(jobId, userId) as Record<string, unknown> | undefined;
+  return row ? mapJobRow(row) : null;
+}
+
+// Reset a user's failed job so the worker can pick it up again.
+export async function retryJob(userId: string, jobId: string): Promise<JobRecord | null> {
+  if (usingFirestore()) return fsRepo.retryJob(userId, jobId);
+  await ensureDatabase();
+  const now = nowIso();
+
+  if (usingPostgres()) {
+    const sql = getPg();
+    const rows = await sql<Record<string, unknown>[]>`
+      UPDATE jobs SET status = 'pending', attempts = 0, run_after = ${now}::timestamptz, error = NULL, updated_at = ${now}
+      WHERE id = ${jobId} AND user_id = ${userId}
+      RETURNING *
+    `;
+    return rows[0] ? mapJobRow(rows[0]) : null;
+  }
+  getSqlite()
+    .prepare("UPDATE jobs SET status = 'pending', attempts = 0, run_after = ?, error = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(now, now, jobId, userId);
+  return getJobForUser(userId, jobId);
+}
+
 export async function getSubmissionByIdForUser(userId: string, submissionId: string) {
+  if (usingFirestore()) return fsRepo.getSubmissionByIdForUser(userId, submissionId);
   await ensureDatabase();
   if (usingPostgres()) {
     const sql = getPg();

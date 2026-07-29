@@ -102,7 +102,8 @@ describe('uploadToAgencies', () => {
     expect(byPlatform.alamy.status).toBe('uploaded');
     expect(byPlatform.adobe.status).toBe('uploaded');
     expect(byPlatform.shutterstock.status).toBe('failed');
-    expect(byPlatform.shutterstock.error).toContain('shutterstock down');
+    // Raw error is masked; only a generic safe message is exposed to the client field.
+    expect(byPlatform.shutterstock.error).toBe('업로드 실패 (연결 또는 인증 오류)');
 
     // A failing platform did not block the others.
     expect(uploadedBytes['upload.alamy.com']).toEqual(EMBEDDED);
@@ -111,5 +112,29 @@ describe('uploadToAgencies', () => {
     // Retry happened for adobe (connected twice), shutterstock exhausted retries (3 attempts).
     expect(connectCounts['sftp.contributor.adobestock.com']).toBe(2);
     expect(connectCounts['ftps.shutterstock.com']).toBe(3);
+  });
+
+  it('sanitizes a path-traversal filename into a safe basename remotePath', async () => {
+    const usedRemotePaths: string[] = [];
+    const createClient = vi.fn((_protocol: FtpProtocol): UploadClient => ({
+      async connect() {},
+      async uploadFrom(_bytes, remotePath) {
+        usedRemotePaths.push(remotePath);
+      },
+      async close() {},
+    }));
+    const embed = vi.fn(async () => EMBEDDED);
+    const loadCredential = vi.fn(async (_userId: string, platform: PlatformKey) => makeCredential(platform));
+
+    const evilAsset: AssetRecord = { ...asset, originalFilename: '../../evil.jpg' };
+    const results = await uploadToAgencies(
+      { userId: 'user-1', asset: evilAsset, fileBytes: Buffer.from('RAW'), platforms: ['alamy'] },
+      { createClient, embed, loadCredential, retries: 0 },
+    );
+
+    expect(results[0].status).toBe('uploaded');
+    expect(results[0].remotePath).toBe('..-..-evil.jpg');
+    expect(results[0].remotePath).not.toContain('/');
+    expect(usedRemotePaths[0]).toBe('..-..-evil.jpg');
   });
 });

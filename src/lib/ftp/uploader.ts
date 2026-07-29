@@ -1,8 +1,10 @@
 import { Readable } from 'node:stream';
 import type { AgencyCredentialRecord, AssetRecord, FtpProtocol, PlatformKey } from '../domain';
 import { decryptSecret } from '../crypto';
+import { logError } from '../logger';
 import { embedMetadata } from '../metadata-embed';
 import { getAgencyCredential } from '../repository';
+import { sanitizeFilename } from '../utils';
 import { FTP_ENDPOINTS, type FtpEndpoint } from './endpoints';
 
 // A minimal transport interface so the FTP/SFTP client can be injected/mocked in tests.
@@ -113,7 +115,7 @@ export async function uploadToAgencies(
 
   const settled = await Promise.allSettled(
     params.platforms.map(async (platform): Promise<UploadResult> => {
-      const remotePath = params.asset.originalFilename;
+      const remotePath = sanitizeFilename(params.asset.originalFilename);
       const endpoint = FTP_ENDPOINTS[platform];
       if (!endpoint) throw new Error(`No FTP endpoint configured for platform: ${platform}`);
       const credential = await loadCredential(params.userId, platform);
@@ -126,11 +128,13 @@ export async function uploadToAgencies(
   return settled.map((result, index) => {
     const platform = params.platforms[index];
     if (result.status === 'fulfilled') return result.value;
+    // Log the raw error server-side only; never leak host/stack details to the client-facing field.
+    logError('ftp.upload_failed', result.reason, { platform });
     return {
       platform,
       status: 'failed',
-      remotePath: params.asset.originalFilename,
-      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      remotePath: sanitizeFilename(params.asset.originalFilename),
+      error: '업로드 실패 (연결 또는 인증 오류)',
     };
   });
 }

@@ -272,6 +272,98 @@ body {
   color: #b4d1ff;
 }
 
+.batch-card {
+  border: 2px solid var(--primary);
+  margin-bottom: 20px;
+}
+
+.batch-title {
+  margin-top: 0;
+  font-size: 26px;
+}
+
+.batch-guide {
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.batch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.batch-label {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.batch-hint {
+  color: #ffcf8f;
+  font-size: 16px;
+}
+
+.batch-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+.batch-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+}
+
+.batch-button {
+  width: 100%;
+  min-height: 60px;
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.batch-status {
+  margin-top: 12px;
+  font-size: 18px;
+  color: #b4d1ff;
+}
+
+.job-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.job-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.job-status {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.job-summary {
+  font-size: 18px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+
+.job-time {
+  color: var(--muted);
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
 .asset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -334,6 +426,55 @@ body {
 
 .auth-shell {
   gap: 20px;
+}
+
+.cred-platform-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+
+.cred-platform-chip {
+  min-height: 52px;
+  font-size: 17px;
+  padding: 0 20px;
+}
+
+.cred-help {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+
+.cred-link {
+  display: inline-block;
+  color: var(--primary);
+  font-size: 16px;
+  margin-bottom: 16px;
+  text-decoration: underline;
+}
+
+.cred-auto-note {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+.footer {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.footer a:hover {
+  color: white;
 }
 
 @media (max-width: 900px) {

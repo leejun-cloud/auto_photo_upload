@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateMetadata } from '@/lib/ai/metadata';
 import { getCurrentUser } from '@/lib/auth';
+import { logInfo } from '@/lib/logger';
 import { getAssetByIdForUser, updateAssetMetadata } from '@/lib/repository';
 import { readStoredObject } from '@/lib/storage';
 
@@ -41,5 +42,6 @@ export async function POST(request: Request, context: { params: Promise<{ assetI
   }
 
   const updated = await updateAssetMetadata(user.id, assetId, metadata);
+  logInfo('asset.metadata_generated', { userId: user.id, assetId });
   return NextResponse.json({ metadata, asset: updated });
 }

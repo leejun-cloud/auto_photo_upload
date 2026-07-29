@@ -34,6 +34,14 @@ export function adminAuth() {
   return getApp().auth();
 }
 
+export function adminDb() {
+  return getApp().firestore();
+}
+
+export function adminBucket() {
+  return getApp().storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || undefined);
+}
+
 export async function verifyIdToken(idToken: string) {
   return adminAuth().verifyIdToken(idToken);
 }

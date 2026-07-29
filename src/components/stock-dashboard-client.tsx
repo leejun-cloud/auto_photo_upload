@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
-import type { AgencyCredentialRecord, AssetRecord, ContributorProfile, SubmissionRecord, UserRecord } from '@/lib/domain';
+import { useEffect, useRef, useState, useTransition } from 'react';
+import type { AgencyCredentialRecord, AssetRecord, ContributorProfile, JobRecord, PlatformKey, SubmissionRecord, UserRecord } from '@/lib/domain';
 import type { W8BenFields } from '@/lib/tax/w8ben';
 import { signIn, signOutClient, signUp } from '@/lib/firebase/client';
+import { jobStatusLabel, jobSummaryText } from '@/lib/jobs/status-copy';
+import { PLATFORM_PRESETS } from '@/lib/ftp/presets';
 
 type AssetWithSubmissions = AssetRecord & { submissions: SubmissionRecord[] };
 type SafeCredential = Omit<AgencyCredentialRecord, 'encryptedPassword'>;
@@ -42,7 +44,54 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
   const [profile, setProfile] = useState<ContributorProfile | null>(null);
   const [w8ben, setW8ben] = useState<W8BenFields | null>(null);
   const [credentials, setCredentials] = useState<SafeCredential[]>([]);
+  const [credPlatform, setCredPlatform] = useState<PlatformKey>('adobe');
   const [isPending, startTransition] = useTransition();
+
+  // 간편 자동 업로드 (배치 파이프라인) 상태
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchPlatforms, setBatchPlatforms] = useState<PlatformKey[]>([]);
+  const [batchStatus, setBatchStatus] = useState('');
+  const [batchRunning, setBatchRunning] = useState(false);
+  const batchFileInputRef = useRef<HTMLInputElement>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 처리 현황 (최근 작업 목록)
+  const [jobs, setJobs] = useState<JobRecord[]>([]);
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
+
+  async function refreshJobs() {
+    if (!user) return;
+    const response = await fetch('/api/jobs', { cache: 'no-store' });
+    if (!response.ok) return;
+    const data = await response.json();
+    setJobs((data.jobs as JobRecord[]).slice(0, 20));
+  }
+
+  async function handleRetryJob(jobId: string) {
+    if (retryingJobId) return;
+    setRetryingJobId(jobId);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/retry`, { method: 'POST' });
+      if (!response.ok) return;
+      await fetch('/api/jobs/tick', { method: 'POST' });
+      await refreshJobs();
+    } finally {
+      setRetryingJobId(null);
+    }
+  }
+
+  // 로그인한 사용자가 자격증명을 가진 플랫폼을 기본 선택으로 채운다.
+  useEffect(() => {
+    const owned = Array.from(new Set(credentials.map((c) => c.platform)));
+    setBatchPlatforms(owned);
+  }, [credentials]);
+
+  // 언마운트 시 폴링 타이머 정리 (타이머 누수 방지).
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, []);
 
   async function refresh() {
     if (!user) return;
@@ -67,7 +116,10 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
   }
 
   useEffect(() => {
-    if (user) void loadOnboarding();
+    if (user) {
+      void loadOnboarding();
+      void refreshJobs();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -209,6 +261,95 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     setMessage('업로드 완료');
   }
 
+  function toggleBatchPlatform(key: PlatformKey) {
+    setBatchPlatforms((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]));
+  }
+
+  async function handleBatchStart() {
+    if (batchRunning) return;
+    if (batchFiles.length === 0) {
+      setBatchStatus('먼저 사진이나 영상 파일을 선택하세요.');
+      return;
+    }
+    if (batchPlatforms.length === 0) {
+      setBatchStatus('업로드할 플랫폼을 하나 이상 선택하세요.');
+      return;
+    }
+
+    setBatchRunning(true);
+    try {
+      // 1) 파일을 하나씩 업로드하고 asset id를 모은다.
+      const assetIds: string[] = [];
+      for (let i = 0; i < batchFiles.length; i += 1) {
+        setBatchStatus(`업로드 중 (${i + 1}/${batchFiles.length})…`);
+        const formData = new FormData();
+        formData.append('file', batchFiles[i]);
+        const response = await fetch('/api/assets/upload', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok) {
+          setBatchStatus(data.error || '업로드 실패');
+          setBatchRunning(false);
+          return;
+        }
+        assetIds.push(data.asset.id as string);
+      }
+
+      // 2) 파이프라인 시작 (메타데이터 자동 생성 + 에이전시 업로드).
+      setBatchStatus('자동 처리를 시작하는 중…');
+      const startRes = await fetch('/api/pipeline/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assetIds, platforms: batchPlatforms, generateMetadata: true }),
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok) {
+        setBatchStatus(startData.error || '자동 처리 시작 실패');
+        setBatchRunning(false);
+        return;
+      }
+      const jobIds = new Set<string>(startData.jobIds as string[]);
+      const total = jobIds.size;
+
+      // 3) 큐를 구동(tick)하며 상태를 폴링한다.
+      let polls = 0;
+      const maxPolls = 60;
+      pollTimerRef.current = setInterval(async () => {
+        polls += 1;
+        try {
+          await fetch('/api/jobs/tick', { method: 'POST' });
+          const jobsRes = await fetch('/api/jobs', { cache: 'no-store' });
+          const jobsData = await jobsRes.json();
+          const mine = (jobsData.jobs as JobRecord[]).filter((j) => jobIds.has(j.id));
+          const succeeded = mine.filter((j) => j.status === 'succeeded').length;
+          const failed = mine.filter((j) => j.status === 'failed').length;
+          const active = mine.filter((j) => j.status === 'pending' || j.status === 'processing').length;
+          setBatchStatus(`처리 완료 ${succeeded} / 진행중 ${active} / 실패 ${failed}`);
+
+          if (active === 0 || polls >= maxPolls) {
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+            await refresh();
+            await refreshJobs();
+            setBatchRunning(false);
+            if (active === 0) {
+              const tail = failed > 0 ? ' — 실패한 사진은 다시 시도할 수 있습니다.' : '';
+              setBatchStatus(`완료! 사진 ${total}장 처리됨 (성공 ${succeeded}, 실패 ${failed})${tail}`);
+            } else {
+              setBatchStatus(`처리가 오래 걸립니다. 잠시 후 새로고침 하세요. (완료 ${succeeded} / 진행중 ${active} / 실패 ${failed})`);
+            }
+          }
+        } catch {
+          // 일시적 네트워크 오류는 다음 폴링에서 다시 시도한다.
+        }
+      }, 2000);
+    } catch (error) {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+      setBatchStatus(error instanceof Error ? error.message : '처리 중 오류가 발생했습니다.');
+      setBatchRunning(false);
+    }
+  }
+
   function handleExport(assetId: string, platform: string) {
     startTransition(async () => {
       setMessage(`${platform} 패키지 생성 중...`);
@@ -280,6 +421,83 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
           <button type="button" className="button" onClick={() => void refresh()}>새로고침</button>
           <button type="button" className="button" onClick={() => void handleLogout()}>로그아웃</button>
         </div>
+      </div>
+
+      <div className="card batch-card">
+        <h2 className="batch-title">간편 자동 업로드</h2>
+        <p className="batch-guide">
+          사진(또는 영상)을 여러 장 고르고, 아래 큰 버튼을 한 번만 누르세요.
+          제목·키워드는 자동으로 만들어지고 선택한 곳에 알아서 올려드립니다.
+        </p>
+
+        <label className="batch-field">
+          <span className="batch-label">1. 사진 고르기 (여러 장 선택 가능)</span>
+          <input
+            ref={batchFileInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            disabled={batchRunning}
+            onChange={(event) => setBatchFiles(Array.from(event.currentTarget.files ?? []))}
+          />
+        </label>
+        {batchFiles.length > 0 ? <p className="batch-guide">선택한 파일 {batchFiles.length}장</p> : null}
+
+        <div className="batch-field">
+          <span className="batch-label">2. 올릴 곳 고르기</span>
+          {credentials.length === 0 ? (
+            <p className="batch-hint">먼저 아래에서 업로드 계정을 등록하세요.</p>
+          ) : (
+            <div className="batch-platforms">
+              {platforms.map((platform) => (
+                <label key={platform.key} className="batch-check">
+                  <input
+                    type="checkbox"
+                    checked={batchPlatforms.includes(platform.key)}
+                    disabled={batchRunning}
+                    onChange={() => toggleBatchPlatform(platform.key)}
+                  />
+                  {platform.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button type="button" className="button primary batch-button" disabled={batchRunning} onClick={() => void handleBatchStart()}>
+          {batchRunning ? '처리 중…' : '업로드하고 자동으로 처리 시작'}
+        </button>
+        {batchStatus ? <p className="batch-status">{batchStatus}</p> : null}
+      </div>
+
+      <div className="card batch-card">
+        <div className="dashboard-header">
+          <h2 className="batch-title">처리 현황</h2>
+          <button type="button" className="button" onClick={() => void refreshJobs()}>새로고침</button>
+        </div>
+        {jobs.length === 0 ? (
+          <p className="batch-guide">아직 처리한 작업이 없습니다. 위에서 사진을 올려보세요.</p>
+        ) : (
+          <ul className="job-list">
+            {jobs.map((job) => (
+              <li key={job.id} className="job-item">
+                <div className="job-status">{jobStatusLabel(job.status)}</div>
+                <p className="job-summary">{jobSummaryText(job)}</p>
+                <p className="job-time">{new Date(job.createdAt).toLocaleString('ko-KR')}</p>
+                {job.status === 'failed' ? (
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={retryingJobId === job.id}
+                    onClick={() => void handleRetryJob(job.id)}
+                  >
+                    {retryingJobId === job.id ? '다시 시도하는 중…' : '다시 시도'}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
@@ -357,36 +575,62 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
       </div>
 
       <div className="section">
-        <h3>FTP 자격증명</h3>
-        <form className="upload-form" onSubmit={(event) => void handleCredentialSave(event)}>
-          <label>
-            플랫폼
-            <select name="platform" defaultValue="adobe">
-              {platforms.map((platform) => (
-                <option key={platform.key} value={platform.key}>{platform.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            프로토콜
-            <select name="protocol" defaultValue="sftp">
-              <option value="ftp">FTP</option>
-              <option value="ftps">FTPS</option>
-              <option value="sftp">SFTP</option>
-            </select>
-          </label>
-          <label>호스트<input name="host" type="text" required /></label>
-          <label>포트<input name="port" type="number" defaultValue={22} required /></label>
-          <label>사용자명<input name="username" type="text" required /></label>
-          <label>비밀번호<input name="password" type="password" required /></label>
-          <button type="submit" className="button primary">자격증명 저장</button>
-        </form>
+        <h3>업로드 계정 연결</h3>
+        <p className="batch-guide">
+          올릴 곳을 고르고, 그곳에서 받은 아이디와 비밀번호만 입력하면 됩니다.
+          서버 주소는 자동으로 채워지니 따로 입력하지 않으셔도 돼요.
+        </p>
+
+        <div className="cred-platform-picker">
+          {PLATFORM_PRESETS.map((preset) => {
+            const connected = credentials.some((c) => c.platform === preset.key);
+            return (
+              <button
+                key={preset.key}
+                type="button"
+                className={`button cred-platform-chip ${credPlatform === preset.key ? 'primary' : ''}`}
+                onClick={() => setCredPlatform(preset.key)}
+              >
+                {preset.label}{connected ? ' ✅' : ''}
+              </button>
+            );
+          })}
+        </div>
+
+        {PLATFORM_PRESETS.filter((preset) => preset.key === credPlatform).map((preset) =>
+          preset.available ? (
+            <div key={preset.key}>
+              <p className="cred-help">{preset.helpText}</p>
+              <a className="cred-link" href={preset.signupUrl} target="_blank" rel="noreferrer">
+                가입/자격증명 확인하기 →
+              </a>
+              <form className="upload-form" onSubmit={(event) => void handleCredentialSave(event)}>
+                <input type="hidden" name="platform" value={preset.key} />
+                <input type="hidden" name="protocol" value={preset.protocol} />
+                <input type="hidden" name="host" value={preset.host} />
+                <input type="hidden" name="port" value={preset.port} />
+                <label>사용자명 (아이디)<input name="username" type="text" required /></label>
+                <label>비밀번호<input name="password" type="password" required /></label>
+                <button type="submit" className="button primary">이 계정으로 저장</button>
+              </form>
+              <p className="cred-auto-note">
+                서버 주소: {preset.host} · {preset.protocol.toUpperCase()} 포트 {preset.port} (자동 입력됨)
+              </p>
+            </div>
+          ) : (
+            <p key={preset.key} className="batch-hint">현재 자동 업로드를 지원하지 않아요.</p>
+          ),
+        )}
+
         {credentials.length > 0 ? (
-          <ul className="meta-list">
-            {credentials.map((credential) => (
-              <li key={credential.id}>{credential.platform} · {credential.protocol} · {credential.host}:{credential.port} · {credential.username}</li>
-            ))}
-          </ul>
+          <>
+            <p className="batch-label">연결된 계정</p>
+            <ul className="meta-list">
+              {credentials.map((credential) => (
+                <li key={credential.id}>✅ {credential.platform} · {credential.username}</li>
+              ))}
+            </ul>
+          </>
         ) : null}
       </div>
 

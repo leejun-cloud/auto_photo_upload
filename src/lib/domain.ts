@@ -1,7 +1,7 @@
 export type PlatformKey = 'adobe' | 'shutterstock' | 'alamy' | 'getty';
 
 export type ReleaseStatus = 'none' | 'model_attached' | 'property_attached' | 'both_attached';
-export type StorageBackend = 'local' | 's3';
+export type StorageBackend = 'local' | 's3' | 'firebase';
 export type MediaType = 'image' | 'video';
 
 export type UserRecord = {
@@ -90,6 +90,24 @@ export type ContributorProfile = {
   address: ContributorAddress;
   tax: ContributorTax;
   payment: ContributorPayment;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type JobStatus = 'pending' | 'processing' | 'succeeded' | 'failed';
+
+export type JobRecord = {
+  id: string;
+  userId: string;
+  assetId: string | null;
+  type: string;
+  status: JobStatus;
+  attempts: number;
+  maxAttempts: number;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  runAfter: string;
   createdAt: string;
   updatedAt: string;
 };

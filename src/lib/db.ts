@@ -4,14 +4,18 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import postgres from 'postgres';
 
-const isPostgres = Boolean(process.env.DATABASE_URL);
+// firestore takes priority: when DB_BACKEND=firestore, sqlite/postgres are ignored entirely.
+const isFirestore = process.env.DB_BACKEND === 'firestore';
+const isPostgres = !isFirestore && Boolean(process.env.DATABASE_URL);
 const baseDataDir = process.env.VERCEL ? path.join(os.tmpdir(), 'stockflow-os') : path.join(process.cwd(), '.data');
 export const dataDir = baseDataDir;
 export const localUploadsDir = path.join(dataDir, 'uploads');
 export const localExportsDir = path.join(dataDir, 'exports');
 
-mkdirSync(localUploadsDir, { recursive: true });
-mkdirSync(localExportsDir, { recursive: true });
+if (!isFirestore) {
+  mkdirSync(localUploadsDir, { recursive: true });
+  mkdirSync(localExportsDir, { recursive: true });
+}
 
 const sqliteDbPath = path.join(dataDir, 'stockflow.db');
 const sqliteSchemaPath = path.join(process.cwd(), 'db', 'schema.sql');
@@ -24,7 +28,7 @@ function bootstrapSqlite(db: BetterSqlite3.Database) {
 }
 
 let sqlite: BetterSqlite3.Database | null = null;
-if (!isPostgres) {
+if (!isFirestore && !isPostgres) {
   sqlite = new BetterSqlite3(sqliteDbPath);
   try {
     bootstrapSqlite(sqlite);
@@ -51,6 +55,10 @@ export function usingPostgres() {
   return isPostgres;
 }
 
+export function usingFirestore() {
+  return isFirestore;
+}
+
 export function getSqlite() {
   if (!sqlite) throw new Error('SQLite is not active');
   return sqlite;
@@ -62,6 +70,7 @@ export function getPg() {
 }
 
 export async function ensureDatabase() {
+  if (isFirestore) return;
   if (!isPostgres) return;
   if (!initPromise) {
     initPromise = (async () => {

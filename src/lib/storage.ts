@@ -4,10 +4,12 @@ import path from 'node:path';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { localExportsDir, localUploadsDir } from './db';
+import { adminBucket } from './firebase/admin';
 import type { PlatformKey, StorageBackend } from './domain';
 import { sanitizeFilename } from './utils';
 
-const backend: StorageBackend = process.env.STORAGE_BACKEND === 's3' ? 's3' : 'local';
+const backend: StorageBackend =
+  process.env.STORAGE_BACKEND === 'firebase' ? 'firebase' : process.env.STORAGE_BACKEND === 's3' ? 's3' : 'local';
 const bucket = process.env.S3_BUCKET;
 const region = process.env.S3_REGION ?? 'us-east-1';
 const endpoint = process.env.S3_ENDPOINT;
@@ -44,6 +46,12 @@ export async function saveUploadObject(params: { ownerId: string; fileName: stri
     return { backend, path: absolutePath };
   }
 
+  if (backend === 'firebase') {
+    const objectName = `stockflow/${key}`;
+    await adminBucket().file(objectName).save(params.bytes, { contentType: params.mimeType });
+    return { backend, path: objectName };
+  }
+
   await new Upload({
     client: s3!,
     params: {
@@ -74,6 +82,12 @@ export async function saveExportObject(params: {
     return { backend, path: absolutePath };
   }
 
+  if (backend === 'firebase') {
+    const objectName = `stockflow/${key}`;
+    await adminBucket().file(objectName).save(params.bytes, { contentType: 'application/zip' });
+    return { backend, path: objectName };
+  }
+
   await new Upload({
     client: s3!,
     params: {
@@ -90,6 +104,11 @@ export async function saveExportObject(params: {
 export async function readStoredObject(storageBackend: StorageBackend, storagePath: string) {
   if (storageBackend === 'local') {
     return readFile(storagePath);
+  }
+
+  if (storageBackend === 'firebase') {
+    const [contents] = await adminBucket().file(storagePath).download();
+    return contents;
   }
 
   const response = await s3!.send(new GetObjectCommand({ Bucket: getBucket(), Key: storagePath }));

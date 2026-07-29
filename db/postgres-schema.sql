@@ -86,7 +86,25 @@ CREATE TABLE IF NOT EXISTS contributor_profiles (
   updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  asset_id TEXT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  payload_json JSONB NOT NULL,
+  result_json JSONB,
+  error TEXT,
+  run_after TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_assets_user_id ON assets(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_submissions_asset_id ON submissions(asset_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id, created_at DESC);

@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/jobs/tick",
+      "schedule": "*/2 * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

@@ -1,11 +1,15 @@
 import { imageSize } from 'image-size';
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
+import { logInfo } from '@/lib/logger';
+import { rateLimit } from '@/lib/rate-limit';
 import { createAsset } from '@/lib/repository';
 import { saveUploadObject } from '@/lib/storage';
 import { mediaTypeFromMime } from '@/lib/utils';
 
 export const runtime = 'nodejs';
+
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES) || 200 * 1024 * 1024;
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -13,11 +17,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  if (!rateLimit(`upload:${user.id}`, 60, 60_000)) {
+    return NextResponse.json({ error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' }, { status: 429 });
+  }
+
   const formData = await request.formData();
   const uploaded = formData.get('file');
 
   if (!(uploaded instanceof File)) {
     return NextResponse.json({ error: 'file is required' }, { status: 400 });
+  }
+
+  if (uploaded.size > MAX_UPLOAD_BYTES) {
+    const maxMb = Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024));
+    return NextResponse.json({ error: `파일이 너무 큽니다 (최대 ${maxMb}MB)` }, { status: 413 });
   }
 
   const title = String(formData.get('title') || '').trim() || uploaded.name.replace(/\.[^.]+$/, '');
@@ -48,6 +61,8 @@ export async function POST(request: Request) {
     keywords,
     releaseStatus: releaseStatus as 'none' | 'model_attached' | 'property_attached' | 'both_attached',
   });
+
+  logInfo('asset.uploaded', { userId: user.id, assetId: asset.id, mediaType: asset.mediaType, fileSize: asset.fileSize });
 
   return NextResponse.json({ asset });
 }

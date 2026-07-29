@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/auth';
-import { uploadToAgencies } from '@/lib/ftp/uploader';
-import { createSubmission, getAssetByIdForUser } from '@/lib/repository';
-import { readStoredObject } from '@/lib/storage';
+import { logInfo } from '@/lib/logger';
+import { runAssetPipeline } from '@/lib/jobs/pipeline';
+import { getAssetByIdForUser } from '@/lib/repository';
 
 export const runtime = 'nodejs';
 
@@ -28,20 +28,19 @@ export async function POST(request: Request, context: { params: Promise<{ assetI
     return NextResponse.json({ error: 'asset not found' }, { status: 404 });
   }
 
-  const fileBytes = await readStoredObject(asset.storageBackend, asset.storagePath);
-  const results = await uploadToAgencies({ userId: user.id, asset, fileBytes, platforms: parsed.data.platforms });
+  const { results } = await runAssetPipeline({
+    userId: user.id,
+    assetId: asset.id,
+    platforms: parsed.data.platforms,
+    generateMetadata: false,
+  });
 
-  for (const result of results) {
-    await createSubmission({
-      assetId: asset.id,
-      userId: user.id,
-      platform: result.platform,
-      status: result.status === 'uploaded' ? 'exported' : 'failed',
-      exportBackend: asset.storageBackend,
-      exportPath: result.remotePath,
-      payloadJson: JSON.stringify(result),
-    });
-  }
+  logInfo('asset.ftp_uploaded', {
+    userId: user.id,
+    assetId: asset.id,
+    uploaded: results.filter((r) => r.status === 'uploaded').length,
+    failed: results.filter((r) => r.status === 'failed').length,
+  });
 
   return NextResponse.json({ results });
 }

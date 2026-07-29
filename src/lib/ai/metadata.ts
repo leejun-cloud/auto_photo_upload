@@ -1,6 +1,6 @@
 import { mediaTypeFromMime, trimText, unique } from '../utils';
 
-const GEMINI_MODEL = process.env.AI_VISION_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.AI_VISION_MODEL || 'gemini-2.5-flash';
 const TEXT_MODEL = process.env.AI_TEXT_MODEL || 'deepseek/deepseek-chat';
 const REQUEST_TIMEOUT_MS = 30_000;
 const TITLE_MAX = 70;
