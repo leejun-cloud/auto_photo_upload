@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import type { AgencyCredentialRecord, AssetRecord, ContributorProfile, JobRecord, PlatformKey, SubmissionRecord, UserRecord } from '@/lib/domain';
 import type { W8BenFields } from '@/lib/tax/w8ben';
-import { signIn, signOutClient, signUp } from '@/lib/firebase/client';
+import { signIn, signInWithGoogle, signOutClient, signUp } from '@/lib/firebase/client';
 import { jobStatusLabel, jobSummaryText } from '@/lib/jobs/status-copy';
 import { PLATFORM_PRESETS } from '@/lib/ftp/presets';
 
@@ -208,6 +208,23 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     });
   }
 
+  async function establishSession(idToken: string, name?: string): Promise<boolean> {
+    const response = await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, name }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(data.error || '인증 실패');
+      return false;
+    }
+    setUser(data.user);
+    const nextAssets = await fetchAssets();
+    setAssets(nextAssets);
+    return true;
+  }
+
   async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -217,23 +234,22 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     const name = String(f.get('name') || '');
     try {
       const idToken = mode === 'register' ? await signUp(email, password) : await signIn(email, password);
-      const response = await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken, name }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setMessage(data.error || '인증 실패');
-        return;
-      }
-      setUser(data.user);
+      const ok = await establishSession(idToken, name);
+      if (!ok) return;
       setMessage(mode === 'register' ? '가입 및 로그인 완료' : '로그인 완료');
       form.reset();
-      const nextAssets = await fetchAssets();
-      setAssets(nextAssets);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '인증 실패');
+    }
+  }
+
+  async function handleGoogleLogin() {
+    try {
+      const idToken = await signInWithGoogle();
+      const ok = await establishSession(idToken);
+      if (ok) setMessage('로그인 완료');
+    } catch {
+      setMessage('Google 로그인 취소 또는 실패');
     }
   }
 
@@ -405,6 +421,14 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
             {mode === 'register' ? '회원가입 후 시작' : '로그인'}
           </button>
         </form>
+        <p className="lead compact" style={{ textAlign: 'center', margin: '12px 0' }}>또는</p>
+        <button
+          type="button"
+          className="button primary batch-button"
+          onClick={() => void handleGoogleLogin()}
+        >
+          Google로 로그인
+        </button>
         {message ? <p className="status-note">{message}</p> : null}
       </section>
     );

@@ -3,7 +3,7 @@
 // Firebase JS SDK (브라우저). NEXT_PUBLIC_FIREBASE_* 환경변수로 초기화한다.
 // 초기화는 실제 인증 동작 시점까지 지연되므로, 빌드 시 환경변수가 없어도 크래시하지 않는다.
 import { getApp, getApps, initializeApp } from 'firebase/app';
-import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, getAuth, GoogleAuthProvider, signInWithEmailAndPassword, signInWithPopup, signOut } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -26,6 +26,12 @@ export async function signUp(email: string, password: string): Promise<string> {
 
 export async function signIn(email: string, password: string): Promise<string> {
   const cred = await signInWithEmailAndPassword(auth(), email, password);
+  return cred.user.getIdToken();
+}
+
+export async function signInWithGoogle(): Promise<string> {
+  const provider = new GoogleAuthProvider();
+  const cred = await signInWithPopup(auth(), provider);
   return cred.user.getIdToken();
 }
 
