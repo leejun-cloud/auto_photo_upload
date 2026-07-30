@@ -462,6 +462,90 @@ body {
   margin: 0;
 }
 
+.guide-copy {
+  margin: 8px 0 20px;
+}
+
+.guide-copy-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.guide-copy-chip {
+  min-height: 48px;
+  font-size: 16px;
+  padding: 0 16px;
+}
+
+.guide-agency {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.guide-agency-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.guide-agency-name {
+  font-size: 20px;
+  margin: 0;
+}
+
+.guide-badge {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+.guide-badge.ok {
+  color: #7be0a4;
+}
+
+.guide-badge.todo {
+  color: #ffd27b;
+}
+
+.guide-steps {
+  margin: 14px 0 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.guide-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.guide-step-text {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.guide-step .cred-link {
+  margin-bottom: 0;
+}
+
+.guide-step-note {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
 .footer {
   display: flex;
   gap: 20px;

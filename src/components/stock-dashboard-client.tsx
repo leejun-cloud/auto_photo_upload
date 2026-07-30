@@ -6,6 +6,7 @@ import type { W8BenFields } from '@/lib/tax/w8ben';
 import { signIn, signInWithGoogle, signOutClient, signUp } from '@/lib/firebase/client';
 import { jobStatusLabel, jobSummaryText } from '@/lib/jobs/status-copy';
 import { PLATFORM_PRESETS } from '@/lib/ftp/presets';
+import { ONBOARDING_GUIDES } from '@/lib/onboarding-guide';
 
 type AssetWithSubmissions = AssetRecord & { submissions: SubmissionRecord[] };
 type SafeCredential = Omit<AgencyCredentialRecord, 'encryptedPassword'>;
@@ -45,6 +46,7 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
   const [w8ben, setW8ben] = useState<W8BenFields | null>(null);
   const [credentials, setCredentials] = useState<SafeCredential[]>([]);
   const [credPlatform, setCredPlatform] = useState<PlatformKey>('adobe');
+  const [copiedLabel, setCopiedLabel] = useState('');
   const [isPending, startTransition] = useTransition();
 
   // 간편 자동 업로드 (배치 파이프라인) 상태
@@ -277,6 +279,16 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     setMessage('업로드 완료');
   }
 
+  async function handleCopy(label: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedLabel(label);
+      setTimeout(() => setCopiedLabel(''), 1500);
+    } catch {
+      setMessage('복사에 실패했습니다. 직접 선택해서 복사해 주세요.');
+    }
+  }
+
   function toggleBatchPlatform(key: PlatformKey) {
     setBatchPlatforms((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]));
   }
@@ -434,6 +446,18 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     );
   }
 
+  const copyFields = profile
+    ? [
+        { label: '영문 이름', value: profile.identity.legalNameFull },
+        { label: '주소 1', value: profile.address.line1 },
+        { label: '주소 2', value: profile.address.line2 },
+        { label: '도시', value: profile.address.city },
+        { label: '지역/시도', value: profile.address.region },
+        { label: '국가', value: profile.address.country },
+        { label: '전화번호', value: profile.identity.phone },
+      ].filter((f) => f.value && f.value.trim().length > 0)
+    : [];
+
   return (
     <section className="card section">
       <div className="dashboard-header">
@@ -557,15 +581,16 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
 
       <div className="section">
         <h3>온보딩 — 마스터 프로필</h3>
+        <p className="cred-help">⚠️ 아래 이름·주소는 해외 스톡 사이트 등록과 세금서류(W-8BEN)에 그대로 사용됩니다. <strong>반드시 영문(로마자)으로 입력하세요.</strong> (예: 이창준 → Changjun Lee)</p>
         <form className="upload-form" onSubmit={(event) => void handleProfileSave(event)}>
-          <label>법적 이름 (전체)<input name="legalNameFull" type="text" required defaultValue={profile?.identity.legalNameFull ?? ''} /></label>
-          <label>표시 이름<input name="displayName" type="text" required defaultValue={profile?.identity.displayName ?? ''} /></label>
-          <label>국가 코드<input name="country" type="text" defaultValue={profile?.identity.country ?? 'KR'} /></label>
-          <label>전화번호<input name="phone" type="text" defaultValue={profile?.identity.phone ?? ''} /></label>
-          <label>주소 1<input name="line1" type="text" defaultValue={profile?.address.line1 ?? ''} /></label>
-          <label>주소 2<input name="line2" type="text" defaultValue={profile?.address.line2 ?? ''} /></label>
-          <label>도시<input name="city" type="text" defaultValue={profile?.address.city ?? ''} /></label>
-          <label>지역/시도<input name="region" type="text" defaultValue={profile?.address.region ?? ''} /></label>
+          <label>법적 이름 (영문 전체)<input name="legalNameFull" type="text" required placeholder="예: Changjun Lee" defaultValue={profile?.identity.legalNameFull ?? ''} /></label>
+          <label>표시 이름 (영문)<input name="displayName" type="text" required placeholder="예: Changjun Lee" defaultValue={profile?.identity.displayName ?? ''} /></label>
+          <label>국가 코드<input name="country" type="text" placeholder="예: KR" defaultValue={profile?.identity.country ?? 'KR'} /></label>
+          <label>전화번호<input name="phone" type="text" placeholder="예: +82 10 4374 6009" defaultValue={profile?.identity.phone ?? ''} /></label>
+          <label>주소 1 (영문 도로명)<input name="line1" type="text" placeholder="예: 50, Daejong-ro 199beon-gil" defaultValue={profile?.address.line1 ?? ''} /></label>
+          <label>주소 2 (영문 상세)<input name="line2" type="text" placeholder="예: Unit 301" defaultValue={profile?.address.line2 ?? ''} /></label>
+          <label>도시 (영문)<input name="city" type="text" placeholder="예: Jung-gu" defaultValue={profile?.address.city ?? ''} /></label>
+          <label>지역/시도 (영문)<input name="region" type="text" placeholder="예: Daejeon" defaultValue={profile?.address.region ?? ''} /></label>
           <label>우편번호<input name="postalCode" type="text" defaultValue={profile?.address.postalCode ?? ''} /></label>
           <label>주소 국가<input name="addressCountry" type="text" defaultValue={profile?.address.country ?? 'KR'} /></label>
           <label>Foreign TIN (해외 납세자번호)<input name="foreignTin" type="text" defaultValue={profile?.tax.foreignTin ?? ''} /></label>
@@ -596,6 +621,75 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
             ) : null}
           </div>
         ) : null}
+      </div>
+
+      <div className="section">
+        <h3>사이트별 등록 안내</h3>
+        <p className="cred-help">
+          아래 사이트들은 <strong>처음 한 번</strong> 직접 가입·설정해야 합니다. 앱이 계정을 대신 만들어주지 않습니다.
+          순서대로 따라 하시고, 마지막에 발급받은 아이디·비밀번호를 아래 "업로드 계정 연결"에 저장하면 그다음부터는 앱이 자동으로 올려드립니다.
+        </p>
+
+        {copyFields.length > 0 ? (
+          <div className="guide-copy">
+            <p className="batch-label">내 영문 정보 복사 (가입 폼에 붙여넣기)</p>
+            <div className="guide-copy-buttons">
+              {copyFields.map((field) => (
+                <button
+                  key={field.label}
+                  type="button"
+                  className="button guide-copy-chip"
+                  onClick={() => void handleCopy(field.label, field.value)}
+                >
+                  {copiedLabel === field.label ? `✅ ${field.label} 복사됨` : `${field.label} 복사`}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="batch-hint">먼저 위 "마스터 프로필"에 영문 이름·주소를 저장하면, 여기서 복사 버튼으로 각 사이트 가입 폼에 붙여넣을 수 있어요.</p>
+        )}
+
+        {PLATFORM_PRESETS.filter((preset) => preset.available).map((preset) => {
+          const guide = ONBOARDING_GUIDES[preset.key];
+          if (!preset.available || !guide) return null;
+          const connected = credentials.some((c) => c.platform === preset.key);
+          return (
+            <div key={preset.key} className="guide-agency">
+              <div className="guide-agency-head">
+                <h4 className="guide-agency-name">{preset.label}</h4>
+                <span className={`guide-badge ${connected ? 'ok' : 'todo'}`}>
+                  {connected ? '✅ 연결됨' : '⚠️ 등록 필요'}
+                </span>
+              </div>
+              <ol className="guide-steps">
+                {guide.steps.map((step) => (
+                  <li key={step.instruction} className="guide-step">
+                    <span className="guide-step-text">{step.instruction}</span>
+                    {step.link ? (
+                      <a className="cred-link" href={step.link.href} target="_blank" rel="noreferrer">
+                        {step.link.label} →
+                      </a>
+                    ) : null}
+                    {step.note ? <span className="guide-step-note">{step.note}</span> : null}
+                  </li>
+                ))}
+              </ol>
+              <p className="cred-auto-note">
+                FTP 접속정보: {preset.host} · {preset.protocol.toUpperCase()} 포트 {preset.port} — 아래 "업로드 계정 연결"에서 아이디·비밀번호만 저장하세요.
+              </p>
+            </div>
+          );
+        })}
+
+        {PLATFORM_PRESETS.filter((preset) => !preset.available).map((preset) => (
+          <div key={preset.key} className="guide-agency">
+            <div className="guide-agency-head">
+              <h4 className="guide-agency-name">{preset.label}</h4>
+              <span className="guide-badge todo">현재 자동 업로드 미지원</span>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="section">
