@@ -44,12 +44,12 @@ export const ONBOARDING_GUIDES: Partial<Record<PlatformKey, PlatformOnboarding>>
     key: 'shutterstock',
     steps: [
       {
-        instruction: '1. 컨트리뷰터 계정 만들기 — 이메일로 무료 가입합니다.',
+        instruction: '1. 컨트리뷰터 계정 만들기 — 아래 페이지에서 "Sign up"을 눌러 이메일로 무료 가입합니다.',
         link: {
-          href: 'https://submit.shutterstock.com/help/en/articles/10617443-how-do-i-sign-up-to-become-a-shutterstock-contributor',
-          label: '셔터스톡 컨트리뷰터 가입 안내 열기',
+          href: 'https://submit.shutterstock.com/',
+          label: '셔터스톡 컨트리뷰터 가입 페이지 열기',
         },
-        note: '이름·주소는 영문으로만 입력해야 합니다. 아래 마스터 프로필 값을 복사해서 쓰세요.',
+        note: '이름·주소는 영문으로만 입력해야 합니다. 아래 마스터 프로필 값을 복사해서 쓰세요. (가입 방법이 궁금하면: https://submit.shutterstock.com/help/en/articles/10617443 )',
       },
       {
         instruction: '2. 세금 정보 제출 — 가입 과정 또는 계정의 "Earnings → Tax Form"에서 W-8BEN(비미국 거주자)을 작성합니다.',
