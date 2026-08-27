@@ -38,6 +38,59 @@ export function getStorageBackend(): StorageBackend {
   return backend;
 }
 
+export type UploadTarget =
+  | { backend: StorageBackend; direct: true; uploadUrl: string; storagePath: string }
+  | { backend: StorageBackend; direct: false; storagePath: '' };
+
+// Vercel Functions hard-cap the request body at 4.5MB (platform-level, not
+// configurable) — see https://vercel.com/docs/functions/limitations. Real camera
+// JPEGs from a professional photographer routinely run 15–40MB+, so proxying
+// upload bytes through a Next.js route handler silently caps out well below any
+// real photo and returns FUNCTION_PAYLOAD_TOO_LARGE. For the `firebase` backend
+// (what production actually uses), the client instead PUTs bytes directly to a
+// short-lived signed URL, bypassing the function body entirely; only the tiny
+// JSON handshake (filename/mime) touches the function.
+export async function createUploadTarget(params: {
+  ownerId: string;
+  fileName: string;
+  mimeType: string;
+}): Promise<UploadTarget> {
+  if (backend !== 'firebase') {
+    // local/S3 dev paths keep the original small-file proxy flow; only
+    // production (firebase backend) needs the large-file bypass.
+    return { backend, direct: false, storagePath: '' };
+  }
+
+  const key = `uploads/${params.ownerId}/${randomUUID()}-${sanitizeFilename(params.fileName)}`;
+  const objectName = `stockflow/${key}`;
+  const [uploadUrl] = await adminBucket()
+    .file(objectName)
+    .getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires: Date.now() + 10 * 60 * 1000,
+      contentType: params.mimeType,
+    });
+  return { backend, direct: true, uploadUrl, storagePath: objectName };
+}
+
+/** True when `storagePath` is a real object under this owner's own upload prefix. */
+export function isOwnedUploadPath(storagePath: string, ownerId: string): boolean {
+  return storagePath.startsWith(`stockflow/uploads/${ownerId}/`);
+}
+
+export async function statStoredObject(storageBackend: StorageBackend, storagePath: string): Promise<{ exists: boolean; size: number }> {
+  if (storageBackend !== 'firebase') {
+    // Only the direct-upload (firebase) path needs a pre-download existence
+    // check; other backends never reach this without bytes already in hand.
+    return { exists: false, size: 0 };
+  }
+  const [exists] = await adminBucket().file(storagePath).exists();
+  if (!exists) return { exists: false, size: 0 };
+  const [meta] = await adminBucket().file(storagePath).getMetadata();
+  return { exists: true, size: Number(meta.size ?? 0) };
+}
+
 export async function saveUploadObject(params: { ownerId: string; fileName: string; mimeType: string; bytes: Buffer }) {
   const key = `uploads/${params.ownerId}/${randomUUID()}-${sanitizeFilename(params.fileName)}`;
   if (backend === 'local') {

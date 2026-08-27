@@ -37,6 +37,58 @@ async function fetchAssets() {
   return data.assets as AssetWithSubmissions[];
 }
 
+type UploadFields = { title?: string; description?: string; keywords?: string[]; releaseStatus?: string };
+
+// Vercel Functions cap a request body at 4.5MB — real camera photos routinely
+// exceed that. When the server backend supports it (production/firebase), this
+// PUTs bytes straight from the browser to storage and only sends small JSON
+// through our API; that upload-url handshake also tells us it's not supported
+// (e.g. local dev on sqlite/local-fs) so we fall back to the original
+// single-request proxy path, which has no such size ceiling locally.
+async function uploadAsset(file: File, fields: UploadFields = {}): Promise<AssetRecord> {
+  const initRes = await fetch('/api/assets/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, mimeType: file.type || 'application/octet-stream', fileSize: file.size }),
+  });
+  const initData = await initRes.json();
+  if (!initRes.ok) throw new Error(initData.error || '업로드 준비 실패');
+
+  if (!initData.direct) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (fields.title) formData.append('title', fields.title);
+    if (fields.description) formData.append('description', fields.description);
+    if (fields.keywords) formData.append('keywords', fields.keywords.join(','));
+    if (fields.releaseStatus) formData.append('releaseStatus', fields.releaseStatus);
+    const response = await fetch('/api/assets/upload', { method: 'POST', body: formData });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '업로드 실패');
+    return data.asset as AssetRecord;
+  }
+
+  const putRes = await fetch(initData.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error('파일 전송 실패 (네트워크 상태를 확인해주세요)');
+
+  const finalizeRes = await fetch('/api/assets/finalize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      storagePath: initData.storagePath,
+      originalFilename: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      ...fields,
+    }),
+  });
+  const finalizeData = await finalizeRes.json();
+  if (!finalizeRes.ok) throw new Error(finalizeData.error || '업로드 등록 실패');
+  return finalizeData.asset as AssetRecord;
+}
+
 export function StockDashboardClient({ currentUser, initialAssets }: Props) {
   const [user, setUser] = useState(currentUser);
   const [assets, setAssets] = useState(initialAssets);
@@ -267,11 +319,21 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const file = formData.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      setMessage('파일을 선택해주세요.');
+      return;
+    }
     setMessage('업로드 중...');
-    const response = await fetch('/api/assets/upload', { method: 'POST', body: formData });
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error || '업로드 실패');
+    try {
+      await uploadAsset(file, {
+        title: String(formData.get('title') || ''),
+        description: String(formData.get('description') || ''),
+        keywords: String(formData.get('keywords') || '').split(',').map((k) => k.trim()).filter(Boolean),
+        releaseStatus: String(formData.get('releaseStatus') || 'none'),
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '업로드 실패');
       return;
     }
     form.reset();
@@ -310,16 +372,14 @@ export function StockDashboardClient({ currentUser, initialAssets }: Props) {
       const assetIds: string[] = [];
       for (let i = 0; i < batchFiles.length; i += 1) {
         setBatchStatus(`업로드 중 (${i + 1}/${batchFiles.length})…`);
-        const formData = new FormData();
-        formData.append('file', batchFiles[i]);
-        const response = await fetch('/api/assets/upload', { method: 'POST', body: formData });
-        const data = await response.json();
-        if (!response.ok) {
-          setBatchStatus(data.error || '업로드 실패');
+        try {
+          const asset = await uploadAsset(batchFiles[i]);
+          assetIds.push(asset.id);
+        } catch (error) {
+          setBatchStatus(error instanceof Error ? error.message : '업로드 실패');
           setBatchRunning(false);
           return;
         }
-        assetIds.push(data.asset.id as string);
       }
 
       // 2) 파이프라인 시작 (메타데이터 자동 생성 + 에이전시 업로드).
