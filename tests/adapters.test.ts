@@ -43,4 +43,30 @@ describe('platform adapters', () => {
     const payload = buildPlatformPayload('adobe', { ...baseAsset, releaseStatus: 'model_attached' });
     expect(payload.metadata.licenseMode).toBe('commercial');
   });
+
+  // Regression: categoryHint used to be hardcoded to 'People / Education' for
+  // every Adobe export regardless of content — confirmed live against real AI
+  // output ("Caribou in shallow water…" and "Black PlayStation Controller…"),
+  // neither of which is people or education.
+  it('derives the Adobe categoryHint from actual content instead of a fixed guess', () => {
+    const wildlife = buildPlatformPayload('adobe', {
+      ...baseAsset,
+      title: 'Caribou in shallow water near forested bank',
+      keywords: ['caribou', 'antlers', 'wildlife', 'nature', 'forest', 'water'],
+    });
+    expect(wildlife.metadata.categoryHint).toBe('Animals / Wildlife');
+
+    const product = buildPlatformPayload('adobe', {
+      ...baseAsset,
+      title: 'Black PlayStation Controller on Wooden Table',
+      keywords: ['controller', 'playstation', 'gaming', 'console', 'technology'],
+    });
+    expect(product.metadata.categoryHint).toBe('Technology');
+
+    const classroom = buildPlatformPayload('adobe', baseAsset); // children reading in a classroom
+    expect(classroom.metadata.categoryHint).toBe('People / Portrait');
+
+    const unmatched = buildPlatformPayload('adobe', { ...baseAsset, title: 'Untitled', keywords: ['xyz123'] });
+    expect(unmatched.metadata.categoryHint).toBe('General — review category manually');
+  });
 });

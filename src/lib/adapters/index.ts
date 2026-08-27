@@ -13,6 +13,33 @@ function resolveLicenseMode(asset: AssetRecord) {
   return asset.releaseStatus === 'none' ? 'editorial' : 'commercial';
 }
 
+// Ordered keyword -> category groups. First group with any keyword match wins,
+// so more specific categories should be listed before broad ones.
+const CATEGORY_KEYWORD_GROUPS: Array<{ category: string; keywords: string[] }> = [
+  { category: 'People / Portrait', keywords: ['person', 'people', 'man', 'woman', 'child', 'children', 'family', 'portrait', 'face', 'student', 'teacher'] },
+  { category: 'Education', keywords: ['classroom', 'school', 'education', 'library', 'reading', 'learning', 'study', 'university'] },
+  { category: 'Animals / Wildlife', keywords: ['animal', 'wildlife', 'bird', 'dog', 'cat', 'wild', 'mammal', 'caribou', 'deer', 'forest animal'] },
+  { category: 'Nature / Landscape', keywords: ['nature', 'landscape', 'forest', 'mountain', 'water', 'river', 'ocean', 'sky', 'outdoor', 'tree'] },
+  { category: 'Technology', keywords: ['technology', 'computer', 'device', 'gadget', 'electronic', 'digital', 'gaming', 'controller', 'console'] },
+  { category: 'Food / Drink', keywords: ['food', 'drink', 'meal', 'restaurant', 'cooking', 'kitchen', 'cuisine'] },
+  { category: 'Business', keywords: ['business', 'office', 'meeting', 'work', 'corporate', 'finance'] },
+  { category: 'Travel / Architecture', keywords: ['travel', 'architecture', 'building', 'city', 'urban', 'tourism', 'landmark'] },
+];
+
+// Adobe's own category field is picked by a human on the contributor portal
+// (see the app's automation boundary: FTP/embed is automatic, final Submit and
+// classification stay manual). This hint is only a convenience note in the
+// exported package, but it must reflect the actual photo — a fixed guess for
+// every asset is actively misleading (e.g. it previously labeled a wildlife
+// photo and a product shot both "People / Education").
+function deriveCategoryHint(asset: AssetRecord): string {
+  const haystack = [asset.title, ...asset.keywords].join(' ').toLowerCase();
+  for (const group of CATEGORY_KEYWORD_GROUPS) {
+    if (group.keywords.some((kw) => haystack.includes(kw))) return group.category;
+  }
+  return 'General — review category manually';
+}
+
 export function buildPlatformPayload(platform: PlatformKey, asset: AssetRecord): PlatformPayload {
   const licenseMode = resolveLicenseMode(asset);
   const common = {
@@ -35,7 +62,7 @@ export function buildPlatformPayload(platform: PlatformKey, asset: AssetRecord):
         ...common,
         title: trimText(asset.title, 200),
         keywords: normalizeKeywords(asset.keywords, 49),
-        categoryHint: 'People / Education',
+        categoryHint: deriveCategoryHint(asset),
       },
     };
   }
