@@ -18,12 +18,14 @@ export type PlatformPreset = {
   | { available: false }
 );
 
-const LABELS: Record<PlatformKey, string> = {
+export const PLATFORM_LABELS: Record<PlatformKey, string> = {
   adobe: '어도비 스톡',
   shutterstock: '셔터스톡',
   alamy: '알라미',
   getty: '게티 / 아이스톡',
 };
+
+const LABELS = PLATFORM_LABELS;
 
 // 각 에이전시에서 FTP 아이디/비밀번호를 확인하는 안내 (한국어).
 const HELP: Partial<Record<PlatformKey, { signupUrl: string; helpText: string }>> = {

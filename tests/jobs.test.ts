@@ -4,7 +4,7 @@ import type { AssetRecord, PlatformKey } from '../src/lib/domain';
 import type { GeneratedMetadata } from '../src/lib/ai/metadata';
 import type { UploadResult } from '../src/lib/ftp/uploader';
 import { runAssetPipeline, type PipelineDeps } from '../src/lib/jobs/pipeline';
-import { processJob } from '../src/lib/jobs/worker';
+import { deliveryFailureMessage, processJob } from '../src/lib/jobs/worker';
 import { createUserFromFirebase, enqueueJob, getJobForUser, markJobFailed } from '../src/lib/repository';
 
 const asset: AssetRecord = {
@@ -120,6 +120,50 @@ describe('processJob', () => {
       updatedAt: 'now',
     };
     await expect(processJob(job)).rejects.toThrow(/unknown job type/);
+  });
+});
+
+describe('deliveryFailureMessage', () => {
+  // A pipeline that finishes without throwing is NOT necessarily a delivery.
+  // uploadToAgencies reports per-platform FTP errors as data, and treating that
+  // as success showed "완료 ✅" for photos that never reached the agency.
+  it('returns null when every platform uploaded', () => {
+    expect(
+      deliveryFailureMessage({
+        results: [
+          { platform: 'adobe', status: 'uploaded' },
+          { platform: 'alamy', status: 'uploaded' },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it('names the agency when a platform failed', () => {
+    expect(deliveryFailureMessage({ results: [{ platform: 'adobe', status: 'failed' }] })).toBe(
+      '어도비 스톡 업로드 실패 (1/1)',
+    );
+  });
+
+  it('reports a partial delivery rather than calling it success', () => {
+    const message = deliveryFailureMessage({
+      results: [
+        { platform: 'adobe', status: 'uploaded' },
+        { platform: 'shutterstock', status: 'failed' },
+      ],
+    });
+    expect(message).toBe('셔터스톡 업로드 실패 (1/2)');
+  });
+
+  it('treats an unknown status as not delivered', () => {
+    expect(deliveryFailureMessage({ results: [{ platform: 'alamy', status: 'weird' }] })).toBe('알라미 업로드 실패 (1/1)');
+  });
+
+  it('is defensive about missing or non-upload results', () => {
+    // Jobs without platform results (e.g. future job types) must stay succeedable.
+    expect(deliveryFailureMessage(null)).toBeNull();
+    expect(deliveryFailureMessage({})).toBeNull();
+    expect(deliveryFailureMessage({ results: [] })).toBeNull();
+    expect(deliveryFailureMessage({ results: 'nope' } as unknown as Record<string, unknown>)).toBeNull();
   });
 });
 

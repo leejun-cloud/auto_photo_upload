@@ -19,7 +19,12 @@ type UploadResultLike = { status?: unknown };
 // One-line reassuring summary of a job. Defensive about missing/garbage result_json.
 export function jobSummaryText(job: JobRecord): string {
   if (job.status === 'failed') {
-    return "처리 중 문제가 발생했어요. '다시 시도'를 눌러주세요.";
+    // Prefer the concrete reason (e.g. "어도비 스톡 업로드 실패 (1/1)") so the
+    // photographer knows which agency to check instead of a generic apology.
+    const detail = typeof job.error === 'string' ? job.error.trim() : '';
+    return detail
+      ? `${detail} — '다시 시도'를 눌러주세요.`
+      : "처리 중 문제가 발생했어요. '다시 시도'를 눌러주세요.";
   }
 
   if (job.status === 'succeeded') {
